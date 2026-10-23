@@ -5,7 +5,10 @@ Drivers book a bay in a web app and get a 4-digit code. At the gate they type th
 
 Everything runs in the [Wokwi](https://wokwi.com) simulator, so **no physical hardware is needed** to try it. The same firmware is written to run on real ESP32 boards too.
 
-**[Watch the demo video](demo.mp4)** (the file `demo.mp4` in this repo; GitHub plays it in the browser).
+
+https://github.com/user-attachments/assets/93370f46-7884-473d-9182-7d2097df2839
+
+
 
 ---
 
