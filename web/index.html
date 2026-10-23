@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Carpark Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+  :root{
+    --asphalt:#2a2d32; --road:#3a3e45; --paint:#e8e4d6; --amber:#f2b632;
+    --go:#3ecf6e; --stop:#ef5350; --ink:#ecebe4; --muted:#9ba1a9;
+    --panel:#1b1d21; --line:#32363c; --page:#141518;
+    --sans:'Barlow',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+    --cond:'Barlow Condensed','Barlow',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--page);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.45}
+  header{padding:22px 28px 6px;display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+  h1{font-family:var(--cond);font-weight:700;font-size:34px;letter-spacing:.01em;margin:0}
+  header p{margin:4px 0 0;color:var(--muted);max-width:70ch}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:14px;background:var(--panel)}
+  .chip::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .chip.ok::before{background:var(--go)} .chip.bad::before{background:var(--stop)} .chip.wait::before{background:var(--amber)}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;padding:16px 28px 32px;align-items:start}
+  .lot-wrap{overflow-x:auto;border-radius:10px}
+
+  /* ---- the world: 720 x 480 ---- */
+  .lot{position:relative;width:720px;height:480px;background:var(--asphalt);border-radius:10px;overflow:hidden;user-select:none}
+  .outside{position:absolute;left:0;right:0;top:332px;bottom:0;background:#1f2226;border-top:3px solid var(--amber)}
+  .outside span{position:absolute;left:14px;top:6px;color:var(--muted);font-size:13px}
+  .road{position:absolute;background:var(--road)}
+  .road.lane{left:0;top:200px;width:720px;height:80px}
+  .road.in{left:270px;top:280px;width:70px;height:200px}
+  .road.out{left:380px;top:280px;width:70px;height:200px}
+  .arrow{position:absolute;color:rgba(232,228,214,.45);font-family:var(--cond);font-weight:600;font-size:15px;text-align:center;width:70px}
+  .sensor{position:absolute;height:0;border-top:2px dashed var(--amber);width:70px}
+  .sensor-label{position:absolute;color:var(--amber);font-size:12px;width:80px}
+  .bay{position:absolute;top:30px;width:130px;height:150px;border:3px solid var(--paint);border-bottom:none;border-radius:2px}
+  .bay-no{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-family:var(--cond);font-weight:600;font-size:30px;color:var(--paint);opacity:.45}
+  .bay.suggest{box-shadow:0 0 0 3px rgba(242,182,50,.6);animation:pulse 1.2s ease-in-out infinite}
+  .bay.suggest::after{content:"GO HERE";position:absolute;top:6px;left:0;right:0;text-align:center;color:var(--amber);font-weight:600;font-size:14px}
+  @keyframes pulse{50%{box-shadow:0 0 0 8px rgba(242,182,50,.12)}}
+  .dot{position:absolute;top:8px;width:16px;height:16px;border-radius:50%;background:#555a62;box-shadow:0 0 0 3px var(--asphalt);transition:background .2s;z-index:2}
+  .dot.free{background:var(--go);box-shadow:0 0 0 3px var(--asphalt),0 0 12px var(--go)}
+  .dot.occupied{background:var(--stop);box-shadow:0 0 0 3px var(--asphalt),0 0 12px var(--stop)}
+  .dot.reserved{background:var(--amber);box-shadow:0 0 0 3px var(--asphalt),0 0 12px var(--amber)}
+  .bay.reserved{background:rgba(242,182,50,.12)}
+  .bay.reserved::before{content:attr(data-rsv);position:absolute;top:56px;left:0;right:0;text-align:center;color:var(--amber);font-weight:600;font-size:13px}
+  .barrier{position:absolute;left:252px;top:318px;width:12px;height:28px;background:#555a62;border-radius:3px;z-index:4}
+  .barrier i{position:absolute;left:6px;top:6px;width:208px;height:8px;border-radius:4px;transform-origin:0 50%;transform:rotate(0deg);
+             background:repeating-linear-gradient(90deg,var(--amber) 0 12px,#222 12px 24px);transition:transform .45s}
+  .barrier.open i{transform:rotate(-78deg)}
+  .barrier-label{position:absolute;left:216px;top:322px;font-size:12px;color:var(--muted);z-index:4}
+
+  .car{position:absolute;left:0;top:0;width:44px;height:76px;border-radius:15px 15px 10px 10px;z-index:3;
+       box-shadow:0 5px 8px rgba(0,0,0,.45),inset 0 0 0 2px rgba(255,255,255,.2);transition:opacity .4s;will-change:transform}
+  .car::before{content:"";position:absolute;left:6px;right:6px;top:16px;height:17px;border-radius:6px;background:rgba(16,22,30,.88)}
+  .car::after{content:"";position:absolute;left:8px;right:8px;bottom:10px;height:11px;border-radius:4px;background:rgba(16,22,30,.78)}
+  .car.mine{box-shadow:0 5px 8px rgba(0,0,0,.45),inset 0 0 0 3px #fff}
+  .car-name{position:absolute;left:0;top:0;z-index:5;padding:1px 7px;border-radius:999px;background:#fff;color:#111;font-size:11px;font-weight:700;white-space:nowrap;pointer-events:none;transition:opacity .4s}
+  .car.can{cursor:pointer}
+  .car.can:hover{filter:brightness(1.15)}
+  .car:focus-visible{outline:3px solid var(--amber);outline-offset:3px}
+  .car-no{position:absolute;left:0;right:0;top:36px;text-align:center;font-family:var(--cond);font-weight:700;font-size:18px;color:rgba(0,0,0,.55)}
+
+  .panel{display:grid;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  h2{font-family:var(--cond);font-weight:600;font-size:21px;margin:0 0 8px}
+  .free-big{font-family:var(--cond);font-weight:700;font-size:64px;line-height:1}
+  .free-big small{font-size:28px;color:var(--muted);font-weight:500}
+  .free-note{color:var(--muted);font-size:14px;margin-top:6px}
+  .stat{display:flex;justify-content:space-between;font-size:15px;margin-top:6px}
+  .stat b{font-weight:600}
+  .rows{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+  .rows li{display:grid;grid-template-columns:54px 1fr auto;gap:8px;align-items:center;font-size:15px}
+  .tag{font-weight:600;font-size:14px;padding:2px 10px;border-radius:999px;background:#2b2e34;color:var(--muted);text-align:center}
+  .tag.free{background:rgba(62,207,110,.15);color:var(--go)} .tag.occupied{background:rgba(239,83,80,.16);color:var(--stop)} .tag.reserved{background:rgba(242,182,50,.16);color:var(--amber)}
+  .cm{color:var(--muted);font-variant-numeric:tabular-nums;font-size:14px}
+  ol.how{margin:0;padding-left:20px;font-size:15px;display:grid;gap:4px}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  button,select,input{font:inherit;color:var(--ink)}
+  button{background:#2b2e34;border:1px solid #444a52;border-radius:8px;padding:8px 14px;cursor:pointer}
+  button:hover{background:#353941}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+  label{display:block;font-size:14px;color:var(--muted);margin:8px 0 4px}
+  input,select{width:100%;background:#121316;border:1px solid #3a3f46;border-radius:8px;padding:8px 10px}
+  #log{margin:0;padding:0;list-style:none;max-height:170px;overflow:auto;font-size:13px;color:var(--muted);display:grid;gap:3px}
+  #log li{border-left:2px solid var(--line);padding-left:8px}
+  @media (max-width:1120px){main{grid-template-columns:minmax(0,1fr)}}
+  @media (prefers-reduced-motion:reduce){.barrier i,.dot,.car{transition:none}.bay.suggest{animation:none}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Smart Carpark Simulator</h1>
+    <p>This page is the physical world. Cars drive on the road, stop at the gate sensors, type their booking code on the keypad and park in bays. Two ESP32 boards in Wokwi do the thinking: the gate controller reads the keypad and moves the barrier, the bay controller checks the code and guides the car.</p>
+  </div>
+  <div class="chips" aria-live="polite">
+    <span class="chip wait" id="brokerChip">Connecting</span>
+    <span class="chip wait" id="espChip">Bay board not seen yet</span>
+    <span class="chip wait" id="gateChip">Gate board not seen yet</span>
+  </div>
+</header>
+
+<main>
+  <div class="lot-wrap">
+    <div class="lot" id="lot" aria-label="Carpark">
+      <div class="outside"><span>Outside the carpark (street)</span></div>
+      <div class="road lane"></div>
+      <div class="road in"></div>
+      <div class="road out"></div>
+      <div class="arrow" style="left:270px;top:292px">&#9650; IN</div>
+      <div class="arrow" style="left:380px;top:292px">OUT &#9660;</div>
+      <div class="sensor" style="left:270px;top:350px"></div>
+      <div class="sensor-label" style="left:184px;top:342px;text-align:right">IN sensor</div>
+      <div class="sensor" style="left:380px;top:305px"></div>
+      <div class="sensor-label" style="left:456px;top:297px">OUT sensor</div>
+      <div class="barrier" id="barrier"><i></i></div>
+      <div class="barrier-label">Gate</div>
+    </div>
+  </div>
+
+  <aside class="panel">
+    <section class="card">
+      <h2>Free bays</h2>
+      <div class="free-big"><span id="freeCount">-</span> <small>/ 4</small></div>
+      <div class="free-note" id="freeNote">Waiting for the ESP32</div>
+      <div class="stat"><span>Cars inside (ESP32 count)</span><b id="insideCount">-</b></div>
+      <div class="stat"><span>Gate</span><b id="gateState">Unknown</b></div>
+    </section>
+
+    <section class="card">
+      <h2>Gate display</h2>
+      <div id="lcdBox" style="font-family:ui-monospace,Menlo,Consolas,monospace;background:#0c3a1a;color:#9dff9d;border-radius:6px;padding:10px 12px;line-height:1.5;font-size:15px;letter-spacing:.06em">
+        <div id="lcd0">&nbsp;</div><div id="lcd1">&nbsp;</div>
+      </div>
+      <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">What the LCD at the gate shows right now. Keypad: 0-9 code, # confirm, * clear, A no booking. 3 wrong codes lock it for 30 s.</p>
+    </section>
+
+    <section class="card">
+      <h2>Drive</h2>
+      <ol class="how">
+        <li>Click a car waiting on the street. It drives to the IN sensor; manually press <b>A</b> on the gate keypad for walk-in entry.</li>
+        <li>If the bay board says yes the barrier opens, the car drives through and follows the guidance to a free bay.</li>
+        <li>Click a parked car to leave: it backs out, drives to the OUT sensor, waits for the gate and goes.</li>
+        <li>The white car with the name tag is <b id="myName">your car</b>. Clicking it does nothing. It goes in only when you book a bay in the app and tap "Drive to the carpark". Then manually enter your 4-digit code on the keypad in the gate Wokwi diagram and press <b>#</b>. The gate board asks the bay board if the code is good; the simulator does not type the code for you.</li>
+      </ol>
+      <label for="parkTo">Park in</label>
+      <select id="parkTo">
+        <option value="auto">Bay chosen by ESP32 guidance</option>
+        <option value="1">Bay 1</option><option value="2">Bay 2</option>
+        <option value="3">Bay 3</option><option value="4">Bay 4</option>
+      </select>
+      <div class="btns" style="margin-top:10px">
+        <button id="btnIn">Send a car in</button>
+        <button id="btnOut">Car leaves</button>
+        <button id="btnReset">Reset</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Booking</h2>
+      <p style="margin:0 0 6px;font-size:14px;color:var(--muted)">How long a booked bay is held. The time starts when the person books in the app. If the car has not parked by then, the booking is released.</p>
+      <label for="holdSec">Hold time (seconds, 10 to 3600)</label>
+      <input id="holdSec" type="number" min="10" max="3600" value="120">
+      <div class="btns" style="margin-top:10px"><button id="btnHold">Set hold time</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Bays</h2>
+      <ul class="rows" id="rows"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Connection</h2>
+      <label for="prefix">Topic prefix (same as PREFIX in both main.cpp files)</label>
+      <input id="prefix" autocomplete="off" spellcheck="false">
+      <label for="broker">Broker (same one as MQTT_HOST in both main.cpp files)</label>
+      <select id="broker">
+        <option value="hivemq">HiveMQ: broker.hivemq.com</option>
+        <option value="emqx">EMQX: broker.emqx.io</option>
+      </select>
+      <div class="btns" style="margin-top:10px"><button id="btnConnect">Reconnect</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Activity</h2>
+      <ul id="log"></ul>
+    </section>
+  </aside>
+</main>
+
+<script>
+(() => {
+  const NUM = 4, FREE_CM = 200, REPLY_MS = 5000;
+  const MY_CAR_NAME = 'Hamim';   // name on your car. Change it here.
+  const MY_CAR = 0;              // which of the 4 cars is yours (0 = the first one)
+  const BAY_Y = 92, LANE_Y = 240, IN_X = 305, OUT_X = 415, IN_WAIT_Y = 376, OUT_WAIT_Y = 272, ENTRY_CLEAR_Y = 275, EXIT_CLEAR_Y = 385, OFF_Y = 540;
+  const SPEED = matchMedia('(prefers-reduced-motion: reduce)').matches ? 700 : 170;   // px per second
+  const bayX = k => 36 + k * 166 + 65;
+  const HOMES = [[110, 366], [110, 442], [610, 366], [610, 442]];
+  const COLORS = ['#e4572e', '#3a86ff', '#f2b632', '#8ac926'];
+  const BROKERS = { hivemq: 'wss://broker.hivemq.com:8884/mqtt', emqx: 'wss://broker.emqx.io:8084/mqtt' };
+  const DEFAULT_PREFIX = 'takrim2026/carpark/k7q2x9m4';
+
+  const $ = id => document.getElementById(id);
+  const load = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
+  const save = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  let prefix = load('carpark.prefix.v2', DEFAULT_PREFIX);
+  let brokerKey = load('carpark.broker', 'hivemq');
+  let client = null;
+  let epoch = 0;                 // bumped by Reset: every running drive stops
+  let seq = 0;
+  let entering = false, exiting = false;
+  let freeVal = '-', suggestVal = 0;
+  let waiter = null;             // one short-lived gate/LCD waiter at a time
+  let gateState = null, bayOnline = false, gateOnline = false;
+  let lcd0Val = '', lcd1Val = ''; // latest gate LCD, used as an acknowledgement channel
+  const gs = { entry: FREE_CM, exit: FREE_CM };   // virtual gate sensors (cm). FREE_CM = nobody there
+  const gsTouched = { entry: false, exit: false };
+  const sent = Array(NUM).fill(FREE_CM);
+  const touched = Array(NUM).fill(false);
+  const slotStatus = Array(NUM).fill(null);
+  const resv = Array(NUM).fill(null);     // booking per bay: { code, rem, arrived, at } or null
+
+  const lot = $('lot');
+  const bayEls = [], dotEls = [], rowTags = [], rowCms = [], cars = [];
+
+  // ---------- bays ----------
+  for (let i = 0; i < NUM; i++) {
+    const x = 36 + i * 166;
+    const bay = document.createElement('div');
+    bay.className = 'bay';
+    bay.style.left = x + 'px';
+    bay.innerHTML = '<span class="bay-no">' + (i + 1) + '</span>';
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    dot.style.left = (x + 65 - 8) + 'px';
+    lot.append(bay, dot);
+    bayEls.push(bay); dotEls.push(dot);
+
+    const li = document.createElement('li');
+    const name = document.createElement('span'); name.textContent = 'Bay ' + (i + 1);
+    const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'unknown';
+    const cm = document.createElement('span'); cm.className = 'cm'; cm.textContent = FREE_CM + ' cm';
+    li.append(name, tag, cm);
+    $('rows').append(li);
+    rowTags.push(tag); rowCms.push(cm);
+  }
+
+  // ---------- cars ----------
+  for (let i = 0; i < NUM; i++) {
+    const el = document.createElement('div');
+    el.className = 'car';
+    el.style.background = COLORS[i];
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    const mine = i === MY_CAR;
+    el.innerHTML = '<span class="car-no">' + (mine ? MY_CAR_NAME.charAt(0).toUpperCase() : i + 1) + '</span>';
+    if (mine) el.classList.add('mine');
+    let tag = null;
+    if (mine) { tag = document.createElement('div'); tag.className = 'car-name'; tag.textContent = MY_CAR_NAME; lot.append(tag); }
+    const car = { el, tag, mine, name: mine ? MY_CAR_NAME : 'Car ' + (i + 1), id: i + 1, x: HOMES[i][0], y: HOMES[i][1], a: 0, state: 'outside', slot: null, target: null, home: HOMES[i] };
+    pose(car);
+    setState(car, 'outside');
+    lot.append(el);
+    if (!mine) showCar(car, false);   // keep idle NPC traffic off-screen until it is sent in
+    cars.push(car);
+    el.addEventListener('click', () => act(car));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(car); } });
+  }
+
+  function showCar(car, on) { car.el.style.opacity = on ? 1 : 0; if (car.tag) car.tag.style.opacity = on ? 1 : 0; }
+  function pose(car) {
+    if (car.tag) car.tag.style.transform = 'translate(' + car.x + 'px,' + (car.y + 48) + 'px) translate(-50%,0)';
+    car.el.style.transform = 'translate(' + car.x + 'px,' + car.y + 'px) translate(-50%,-50%) rotate(' + car.a + 'deg)';
+  }
+  function setState(car, s) {
+    car.state = s;
+    const can = s === 'outside' || s === 'parked';
+    car.el.classList.toggle('can', can);
+    car.el.setAttribute('aria-label', car.name + ', ' + (s === 'outside' ? 'waiting on the street. Press Enter to drive in'
+      : s === 'parked' ? 'parked in bay ' + (car.slot + 1) + '. Press Enter to leave' : s));
+  }
+
+  // ---------- driving ----------
+  function drive(car, pts) {
+    const my = epoch;
+    return new Promise(resolve => {
+      let i = 0, last = performance.now();
+      function step(now) {
+        if (my !== epoch) return resolve(false);
+        const dt = Math.min(0.05, (now - last) / 1000); last = now;
+        let move = SPEED * dt;
+        while (move > 0 && i < pts.length) {
+          const dx = pts[i][0] - car.x, dy = pts[i][1] - car.y, d = Math.hypot(dx, dy);
+          if (d < 0.001) { i++; continue; }
+          const want = Math.atan2(dx, -dy) * 180 / Math.PI;      // 0 = up, 90 = right, 180 = down
+          const diff = ((want - car.a + 540) % 360) - 180, maxTurn = 420 * dt;
+          car.a += Math.max(-maxTurn, Math.min(maxTurn, diff));
+          if (d <= move) { car.x = pts[i][0]; car.y = pts[i][1]; move -= d; i++; }
+          else { car.x += dx / d * move; car.y += dy / d * move; move = 0; }
+        }
+        pose(car);
+        if (i >= pts.length) return resolve(true);
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+  function face(car, ang) {
+    const my = epoch, t0 = performance.now(), a0 = car.a, diff = ((ang - a0 + 540) % 360) - 180;
+    return new Promise(res => {
+      function s(now) {
+        if (my !== epoch) return res();
+        const p = Math.min(1, (now - t0) / 220);
+        car.a = a0 + diff * p; pose(car);
+        if (p < 1) requestAnimationFrame(s); else res();
+      }
+      requestAnimationFrame(s);
+    });
+  }
+
+  // ---------- talking to the gate board ----------
+  const connected = () => !!(client && client.connected);
+
+  function cancelWaiter(value = 'cancel') {
+    if (!waiter) return;
+    clearTimeout(waiter.t);
+    const r = waiter.res; waiter = null; r(value);
+  }
+  function waitGate(pred, ms) {      // resolves with "kind:value" when a fresh gate message matches, or "timeout"
+    cancelWaiter('replaced');
+    return new Promise(res => {
+      const t = setTimeout(() => { if (waiter && waiter.t === t) waiter = null; res('timeout'); }, ms);
+      waiter = { pred, res, t };
+    });
+  }
+  function feed(kind, v) {
+    if (waiter && waiter.pred(kind, v)) { clearTimeout(waiter.t); const r = waiter.res; waiter = null; r(kind + ':' + v); }
+  }
+  function lcdHasPrompt() { return /^Code:\s*[\*_]{4}/.test(lcd0Val); }
+  function lcdMaskCount() {
+    const m = lcd0Val.match(/^Code:\s*([*_]{4})/);
+    return m ? (m[1].match(/\*/g) || []).length : -1;
+  }
+  async function until(pred, ms, step = 100) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (pred()) return true; await sleep(step); }
+    return !!pred();
+  }
+  async function untilGate(open, ms) {      // wait until the barrier reports open/closed
+    return until(() => gateState === (open ? 'open' : 'closed'), ms);
+  }
+  async function waitForPrompt(ms = 30000) {
+    if (lcdHasPrompt()) return true;
+    const r = await waitGate((k) => k === 'lcd' && lcdHasPrompt(), ms);
+    return r !== 'timeout' && r !== 'cancel' && r !== 'replaced';
+  }
+  async function sendKeyAndWaitEcho(ch, expectedStars, ms = 15000) {
+    if (!publish('sim/key', ch, false)) return false;
+    if (lcdMaskCount() >= expectedStars) return true;
+    const r = await waitGate((k) => k === 'lcd' && lcdMaskCount() >= expectedStars, ms);
+    return r !== 'timeout' && r !== 'cancel' && r !== 'replaced';
+  }
+  function setGs(which, cm) {               // the sensor in front of the barrier: a car stands there (small cm) or not (FREE_CM)
+    gs[which] = cm; gsTouched[which] = true;
+    publish('sim/gs/' + which, String(cm), false);
+  }
+
+  function setSlot(k, cm) {
+    sent[k] = cm; touched[k] = true;
+    rowCms[k].textContent = cm + ' cm';
+    publish('sim/slot/' + (k + 1), String(cm), false);
+  }
+  function park(car, k, quiet) {
+    car.slot = k; car.target = null; car.code = null;
+    setState(car, 'parked');
+    setSlot(k, 8 + Math.round(Math.random() * 17));
+    if (!quiet) log(car.name + ' parked in bay ' + (k + 1));
+  }
+  function sendHome(car) {
+    return drive(car, [[IN_X, car.home[1]], [car.home[0], car.home[1]]]).then(async ok => {
+      if (!ok) return;
+      await face(car, 0);
+      setState(car, 'outside');
+      if (!car.mine) showCar(car, false);
+    });
+  }
+
+  function chooseBay(car) {
+    const busy = k => cars.some(c => c !== car && (c.slot === k || c.target === k)) || slotStatus[k] === 'occupied';
+    const taken = k => busy(k) || !!(resv[k] && resv[k].code !== car.code);   // a bay booked by someone else is not for this car
+    const mineBay = car.code ? resv.findIndex(r => r && r.code === car.code) : -1;
+    if (mineBay >= 0 && !busy(mineBay)) return mineBay;                        // a booked car drives to its own bay
+    const want = $('parkTo').value;
+    if (want !== 'auto' && !taken(Number(want) - 1)) return Number(want) - 1;
+    if (suggestVal > 0 && !taken(suggestVal - 1)) return suggestVal - 1;
+    for (let k = 0; k < NUM; k++) if (!taken(k)) return k;
+    return -1;
+  }
+
+  async function driveIn(car, forcedCode) {
+    if (!connected()) { log('Not connected to the broker'); return; }
+    if (entering) { log('Another car is at the gate'); return; }
+    entering = true;
+    const my = epoch;
+    const code = (forcedCode || '').replace(/[^0-9]/g, '');   // only your car has a booking code
+    car.code = code || null;
+    setState(car, 'entering');
+    let res = 'cancel';
+    try {
+      if (!await drive(car, [[IN_X, car.home[1]], [IN_X, IN_WAIT_Y]])) return;
+      await face(car, 0);
+      setGs('entry', 30);                                   // the car is now in front of the entry sensor
+      log(car.name + ' stops at the IN sensor');
+      if (!gateOnline) log('The gate board has not been seen yet. Is the gate simulation running?');
+
+      // Do NOT guess when the ESP32 is ready. Wokwi can run far slower than wall-clock time.
+      // The LCD prompt is the acknowledgement that the gate really entered keypad mode.
+      if (!await waitForPrompt(45000) || my !== epoch) { res = 'prompt-timeout'; }
+      else {
+        // Manual keypad mode: do not publish digits or A automatically.
+        // The user enters the PIN (0-9 then #) or walk-in (A) directly on the
+        // existing Wokwi keypad in gate/diagram.json. The gate firmware owns input.
+        if (code) log('Manual action required: enter booking code ' + code + ' on the gate keypad, then press #');
+        else log('Manual action required: press A on the gate keypad for walk-in entry');
+        const checking = waitGate((k) => k === 'lcd' && lcd0Val.startsWith('Checking'), 120000);
+        const ck = await checking;
+        if (ck === 'timeout' || ck === 'cancel' || ck === 'replaced') res = 'manual-timeout';
+        else res = await waitGate((k) => k === 'result', 60000);
+      }
+      if (res === 'result:ok') {
+        if (!await untilGate(true, 30000)) res = 'gate-timeout';
+      }
+    } finally { entering = false; cancelWaiter(); }
+    if (my !== epoch || res === 'cancel') return;
+    if (res !== 'result:ok') {
+      car.code = null;
+      const why = { 'result:full': 'the carpark is full', 'result:wrong': 'the code was refused', 'result:used': 'that code was already used',
+                    'result:locked': 'the keypad is locked', 'result:offline': 'the gate board has no link to the bay board',
+                    'result:timeout': 'the bay board did not answer in time', 'prompt-timeout': 'the gate never became ready for keypad input',
+                    'key-timeout': 'the gate did not acknowledge a keypad digit', 'check-timeout': 'the gate did not start checking the code',
+                    'gate-timeout': 'the code was accepted but the barrier did not report open', 'manual-timeout': 'no manual keypad submission was received in time' }[res] ||
+                  'no valid answer from the gate. Are both simulations running with the same prefix?';
+      log('Entry denied: ' + why + '. ' + car.name + ' turns back');
+      setGs('entry', FREE_CM);
+      await sendHome(car);
+      return;
+    }
+    log('Code accepted, the barrier opens for ' + car.name);
+    // gate=open is the acknowledgement; only a tiny visual pause is needed for the CSS arm animation.
+    await sleep(450);
+    if (my !== epoch) return;
+    if (!await drive(car, [[IN_X, ENTRY_CLEAR_Y]])) return; // move fully beyond the barrier before clearing the sensor
+    setGs('entry', FREE_CM);                                // the sensor is clear: the gate board counts the car as inside
+    const k = chooseBay(car);
+    if (k < 0) { log('No free bay for ' + car.name + ', it leaves again'); car.slot = null; await driveOut(car, true); return; }
+    car.target = k;
+    if (!await drive(car, [[IN_X, LANE_Y], [bayX(k), LANE_Y], [bayX(k), BAY_Y]])) return;
+    await face(car, 0);
+    if (my !== epoch) return;
+    park(car, k);
+  }
+
+  async function driveOut(car, fromLane) {
+    if (!connected()) { log('Not connected to the broker'); return; }
+    if (exiting) { log('Another car is at the OUT sensor'); return; }
+    exiting = true;
+    const my = epoch, k = car.slot;
+    setState(car, 'leaving');
+    car.code = null;
+    if (k !== null) {
+      car.slot = null; car.target = null;
+      setSlot(k, FREE_CM);
+      log(car.name + ' backs out of bay ' + (k + 1));
+    }
+    let opened = false;
+    try {
+      const path = fromLane ? [[IN_X, LANE_Y], [OUT_X, LANE_Y], [OUT_X, OUT_WAIT_Y]] : [[car.x, LANE_Y], [OUT_X, LANE_Y], [OUT_X, OUT_WAIT_Y]];
+      if (!await drive(car, path)) return;
+      setGs('exit', 30);                                    // the car stands in front of the exit sensor
+      log(car.name + ' is at the OUT sensor, waiting for the barrier');
+      opened = await untilGate(true, 45000);
+    } finally { exiting = false; }
+    if (my !== epoch) return;
+    if (!opened) {
+      setGs('exit', FREE_CM);
+      log('The barrier did not open before the safety timeout. ' + car.name + ' goes back to its bay');
+      if (k !== null && !cars.some(c => c !== car && (c.slot === k || c.target === k))) {
+        if (await drive(car, [[OUT_X, LANE_Y], [bayX(k), LANE_Y], [bayX(k), BAY_Y]])) { await face(car, 0); park(car, k, true); }
+      }
+      return;
+    }
+    await sleep(450);
+    if (my !== epoch) return;
+    if (!await drive(car, [[OUT_X, EXIT_CLEAR_Y]])) return; // move fully beyond the barrier before clearing the sensor
+    setGs('exit', FREE_CM);                                 // clear: the gate board tells the bay board the car left
+    if (!await drive(car, [[OUT_X, OFF_Y]])) return;
+    log(car.name + ' left the carpark');
+    showCar(car, false);                                    // the next arrival appears on the street
+    await sleep(500);
+    if (my !== epoch) return;
+    car.x = car.home[0]; car.y = car.home[1]; car.a = 0; pose(car);
+    setState(car, 'outside');
+    showCar(car, car.mine);          // only the user's own car remains visible on the street
+
+  }
+
+  function act(car) {
+    if (car.mine && car.state === 'outside') { log(car.name + ' goes in only from the app: book a bay, then tap "Drive to the carpark"'); return; }
+    if (car.state === 'outside') driveIn(car);
+    else if (car.state === 'parked') driveOut(car, false);
+  }
+
+  // ---------- UI ----------
+  function setChip(id, text, state) { const c = $(id); c.textContent = text; c.className = 'chip ' + state; }
+  function log(text) {
+    const li = document.createElement('li');
+    li.textContent = new Date().toLocaleTimeString() + '  ' + text;
+    const ul = $('log');
+    ul.prepend(li);
+    while (ul.children.length > 30) ul.lastChild.remove();
+  }
+  function renderNote() {
+    $('freeCount').textContent = freeVal;
+    if (freeVal === '-') $('freeNote').textContent = 'Waiting for the ESP32';
+    else if (suggestVal > 0) $('freeNote').textContent = 'Guiding the arriving car to bay ' + suggestVal;
+    else if (freeVal === '0') $('freeNote').textContent = 'Carpark is full';
+    else $('freeNote').textContent = 'Free and not booked (reported by the ESP32)';
+    bayEls.forEach((b, i) => b.classList.toggle('suggest', i === suggestVal - 1));
+  }
+  const mmss = n => Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+  const leftSec = k => Math.max(0, resv[k].rem - Math.floor((Date.now() - resv[k].at) / 1000));
+  function renderBay(k) {
+    const s = slotStatus[k], r = resv[k];
+    const showRsv = !!r && s !== 'occupied';       // a car in the bay always wins over the booking mark
+    dotEls[k].className = 'dot' + (showRsv ? ' reserved' : s ? ' ' + s : '');
+    bayEls[k].classList.toggle('reserved', showRsv);
+    bayEls[k].dataset.rsv = showRsv ? 'RESERVED ' + mmss(leftSec(k)) : '';
+    rowTags[k].textContent = showRsv ? 'reserved ' + r.code + ' ' + mmss(leftSec(k)) + (r.arrived ? ', car inside' : '') : (s || 'unknown');
+    rowTags[k].className = 'tag' + (showRsv ? ' reserved' : s ? ' ' + s : '');
+  }
+  function renderResv() { for (let k = 0; k < NUM; k++) renderBay(k); }
+  function resetStatusUi() {
+    freeVal = '-'; suggestVal = 0;
+    slotStatus.fill(null);
+    resv.fill(null);
+    renderResv();
+    $('insideCount').textContent = '-';
+    $('gateState').textContent = 'Unknown';
+    $('barrier').classList.remove('open');
+    gateState = null; lcd0Val = ''; lcd1Val = '';
+    $('lcd0').innerHTML = '&nbsp;'; $('lcd1').innerHTML = '&nbsp;';
+    renderNote();
+  }
+
+  // ---------- MQTT ----------
+  function publish(suffix, value, retain) {
+    if (!connected()) return false;
+    client.publish(prefix + '/' + suffix, value, { qos: 0, retain: !!retain });
+    return true;
+  }
+  function syncAll() {    // only sensors this page has touched: never overwrite what the real sensors say
+    for (let k = 0; k < NUM; k++) if (touched[k]) publish('sim/slot/' + (k + 1), String(sent[k]), false);
+    for (const w of ['entry', 'exit']) if (gsTouched[w]) publish('sim/gs/' + w, String(gs[w]), false);
+  }
+
+  function sendBooked(raw) {        // the app says: the booked person is driving to the carpark now
+    const code = raw.trim().replace(/[^0-9]/g, '');
+    if (!resv.some(r => r && r.code === code && !r.arrived)) { log('Ignored: no waiting booking ' + code); return; }
+    if (cars.some(c => c.code === code)) return;                    // that car is already on its way
+    const c = cars[MY_CAR];                                         // a booking always belongs to your car
+    if (c.state !== 'outside') { log('Booking ' + code + ': ' + c.name + ' is not on the street (parked or still driving)'); return; }
+    log('The app says booking ' + code + ' is on its way: ' + c.name + ' drives in');
+    driveIn(c, code);
+  }
+
+  function onMsg(topic, buf) {
+    if (topic === prefix + '/sim/arrive') { sendBooked(buf.toString()); return; }
+    const base = prefix + '/status/';
+    if (!topic.startsWith(base)) return;
+    const sub = topic.slice(base.length);
+    const msg = buf.toString().trim();
+
+    if (sub.startsWith('slot/')) {
+      const k = Number(sub.slice(5)) - 1;
+      if (k >= 0 && k < NUM && (msg === 'free' || msg === 'occupied')) {
+        slotStatus[k] = msg;
+        renderBay(k);
+      }
+    } else if (sub.startsWith('reserve/')) {
+      const k = Number(sub.slice(8)) - 1;
+      if (k >= 0 && k < NUM) {
+        const [code, rem, arr] = msg.split(':');
+        resv[k] = (msg !== 'none' && code && Number.isInteger(Number(rem))) ? { code, rem: Number(rem), arrived: arr === '1', at: Date.now() } : null;
+        renderBay(k);
+      }
+    } else if (sub === 'hold') {
+      if (document.activeElement !== $('holdSec') && Number(msg) > 0) $('holdSec').value = msg;
+    } else if (sub === 'available') {
+      freeVal = msg; renderNote();
+    } else if (sub === 'suggest') {
+      suggestVal = Number(msg) || 0; renderNote();
+    } else if (sub === 'inside') {
+      $('insideCount').textContent = msg;
+    } else if (sub === 'gate') {
+      gateState = msg === 'open' ? 'open' : 'closed';
+      $('gateState').textContent = msg === 'open' ? 'Open' : 'Closed';
+      $('barrier').classList.toggle('open', msg === 'open');
+      feed('gate', gateState);
+    } else if (sub === 'gateresult') {
+      feed('result', msg);
+      const say = { ok: 'Code accepted', wrong: 'Wrong code', used: 'Code already used', full: 'Carpark full', locked: 'Keypad locked for 30 s',
+                    offline: 'Gate board cannot reach the bay board', timeout: 'No answer from the bay board' }[msg];
+      if (say) log('Gate: ' + say);
+    } else if (sub === 'gatelcd') {
+      const [l0, l1] = msg.split('|');
+      lcd0Val = l0 || ''; lcd1Val = l1 || '';
+      $('lcd0').textContent = lcd0Val || '\u00a0'; $('lcd1').textContent = lcd1Val || '\u00a0';
+      feed('lcd', lcd0Val + '|' + lcd1Val);
+    } else if (sub === 'gateonline') {
+      gateOnline = msg === 'online';
+      if (gateOnline) { setChip('gateChip', 'Gate board online', 'ok'); syncAll(); }
+      else setChip('gateChip', 'Gate board offline', 'bad');
+    } else if (sub === 'event') {
+      const [name, id] = msg.split(':');
+      if (name.startsWith('book-')) {
+        const say = { 'book-ok': 'accepted', 'book-denied': 'refused (the bay is not free)', 'book-expired': 'expired: the car did not park in time, the bay is free again',
+                      'book-done': 'complete: the car parked in its bay', 'book-cancelled': 'cancelled' }[name];
+        if (say) log('Booking ' + id + ' ' + say);
+        return;
+      }
+      // entry-ok / exit-ok only matter for the activity log
+      if (name === 'entry-ok') log('Bay board: car counted as inside');
+      else if (name === 'exit-ok') log('Bay board: car counted as left');
+    } else if (sub === 'online') {
+      bayOnline = msg === 'online';
+      if (bayOnline) { setChip('espChip', 'Bay board online', 'ok'); syncAll(); }
+      else setChip('espChip', 'Bay board offline', 'bad');
+    }
+  }
+
+  function connect() {
+    if (typeof mqtt === 'undefined') { setChip('brokerChip', 'MQTT library failed to load. Check your internet.', 'bad'); return; }
+    if (client) { client.removeAllListeners(); client.end(true); client = null; }
+    resetStatusUi();
+    setChip('brokerChip', 'Connecting', 'wait');
+    setChip('espChip', 'Bay board not seen yet', 'wait');
+    setChip('gateChip', 'Gate board not seen yet', 'wait');
+    bayOnline = gateOnline = false;
+    client = mqtt.connect(BROKERS[brokerKey], {
+      clientId: 'web-sim-' + Math.random().toString(16).slice(2, 8),
+      reconnectPeriod: 3000,
+      connectTimeout: 8000
+    });
+    client.on('connect', () => {
+      setChip('brokerChip', 'Broker connected', 'ok');
+      client.subscribe(prefix + '/status/#');
+      client.subscribe(prefix + '/sim/arrive');
+      syncAll();
+      log('Connected to ' + BROKERS[brokerKey]);
+    });
+    client.on('reconnect', () => setChip('brokerChip', 'Reconnecting', 'wait'));
+    client.on('close', () => setChip('brokerChip', 'Broker disconnected', 'bad'));
+    client.on('error', e => log('MQTT error: ' + e.message));
+    client.on('message', onMsg);
+  }
+
+  // ---------- controls ----------
+  $('myName').textContent = MY_CAR_NAME + "'s car";
+  $('prefix').value = prefix;
+  $('broker').value = brokerKey;
+  $('btnConnect').addEventListener('click', () => {
+    prefix = $('prefix').value.trim().replace(/^\/+|\/+$/g, '') || DEFAULT_PREFIX;
+    brokerKey = $('broker').value;
+    $('prefix').value = prefix;
+    save('carpark.prefix.v2', prefix);
+    save('carpark.broker', brokerKey);
+    connect();
+  });
+  $('btnHold').addEventListener('click', () => {
+    const n = parseInt($('holdSec').value, 10);
+    if (!(n >= 10 && n <= 3600)) { log('Hold time must be between 10 and 3600 seconds'); return; }
+    if (publish('sim/hold', String(n), true)) log('Booking hold time set to ' + n + ' seconds (for new bookings)');
+    else log('Not connected to the broker');
+  });
+  $('btnIn').addEventListener('click', () => {
+    const c = cars.find(c => c.state === 'outside' && !c.mine);
+    if (c) { showCar(c, true); driveIn(c); } else log('No NPC car is available');
+  });
+  $('btnOut').addEventListener('click', () => {
+    const c = cars.filter(c => c.state === 'parked').sort((a, b) => a.slot - b.slot)[0];
+    if (c) driveOut(c, false); else log('No car is parked');
+  });
+  $('btnReset').addEventListener('click', () => {
+    epoch++;                                             // stops every drive in progress
+    cancelWaiter('cancel');
+    entering = exiting = false;
+    cars.forEach(c => {
+      if (c.slot !== null) setSlot(c.slot, FREE_CM);
+      c.slot = null; c.target = null; c.a = 0;
+      c.x = c.home[0]; c.y = c.home[1]; pose(c);
+      showCar(c, c.mine);
+      setState(c, 'outside');
+    });
+    setGs('entry', FREE_CM); setGs('exit', FREE_CM);
+    publish('sim/reset', '1', false);
+    log('Reset: your car is on the street; NPC traffic is hidden until sent in');
+  });
+
+  setInterval(renderResv, 1000);                         // booking countdowns
+  connect();
+})();
+</script>
+</body>
+</html>

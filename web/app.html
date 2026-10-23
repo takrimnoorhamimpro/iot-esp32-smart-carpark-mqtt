@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carpark App</title>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+  :root{
+    --page:#f3f4f1; --card:#ffffff; --ink:#1c1f22; --muted:#6b7279; --line:#dfe2dc;
+    --go:#1f9d55; --go-bg:#e3f4ea; --stop:#d64545; --stop-bg:#fbe7e7; --amber:#c98a06; --amber-bg:#fdf2d6;
+    --font:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --page:#141518; --card:#1d1f23; --ink:#ecebe4; --muted:#9ba1a9; --line:#33373d;
+      --go:#3ecf6e; --go-bg:rgba(62,207,110,.14); --stop:#ef5350; --stop-bg:rgba(239,83,80,.15);
+      --amber:#f2b632; --amber-bg:rgba(242,182,50,.14);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--page);color:var(--ink);font-family:var(--font);line-height:1.4}
+  .app{max-width:560px;margin:0 auto;padding:16px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  h1{font-size:20px;margin:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;font-size:13px;background:var(--card)}
+  .chip::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .chip.ok::before{background:var(--go)} .chip.bad::before{background:var(--stop)} .chip.wait::before{background:var(--amber)}
+  .hero{margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .hero .n{font-size:68px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+  .hero .n small{font-size:26px;color:var(--muted);font-weight:500}
+  .hero .t{font-size:16px;color:var(--muted);text-align:right}
+  .banner{margin-top:12px;padding:12px 14px;border-radius:12px;font-weight:600;text-align:center;background:var(--card);border:1px solid var(--line)}
+  .banner.go{background:var(--go-bg);color:var(--go);border-color:transparent}
+  .banner.stop{background:var(--stop-bg);color:var(--stop);border-color:transparent}
+  .banner.guide{background:var(--amber-bg);color:var(--amber);border-color:transparent}
+
+  .map{margin-top:12px;display:block;width:100%;height:auto;border-radius:14px;background:#2a2d32}
+  .map text{font-family:var(--font)}
+  .arm{transform-origin:258px 328px;transition:transform .45s}
+  .open .arm{transform:rotate(-78deg)}
+  .suggest-ring{fill:none;stroke:#f2b632;stroke-width:4;opacity:0}
+  .is-suggest .suggest-ring{opacity:1;animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{50%{stroke-opacity:.35}}
+  .bay-car{opacity:0;transition:opacity .25s}
+  .occupied .bay-car{opacity:1}
+  .bay-led{fill:#555a62;transition:fill .2s}
+  .free .bay-led{fill:#3ecf6e} .occupied .bay-led{fill:#ef5350}
+  .bay-tint{fill:transparent;transition:fill .2s}
+  .free .bay-tint{fill:rgba(62,207,110,.12)} .occupied .bay-tint{fill:rgba(239,83,80,.14)}
+  .reserved .bay-tint{fill:rgba(242,182,50,.20)} .reserved .bay-led{fill:#f2b632}
+  .rsv-label{opacity:0;fill:#f2b632;font-size:13px;font-weight:700}
+  .reserved .rsv-label{opacity:1}
+  .go-label{opacity:0}
+  .is-suggest .go-label{opacity:1}
+
+  .grid{margin-top:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .slot{background:var(--card);border:2px solid var(--line);border-radius:12px;padding:8px 6px;text-align:center}
+  .slot .no{font-size:12px;color:var(--muted)}
+  .slot .st{font-size:16px;font-weight:700}
+  .slot.free{border-color:var(--go);background:var(--go-bg)} .slot.free .st{color:var(--go)}
+  .slot.occupied{border-color:var(--stop);background:var(--stop-bg)} .slot.occupied .st{color:var(--stop)}
+  .slot{cursor:pointer;font:inherit;color:inherit;width:100%;margin-top:0}
+  .slot.reserved{border-color:var(--amber);background:var(--amber-bg)} .slot.reserved .st{color:var(--amber)}
+  .slot.suggest{outline:3px solid var(--amber);outline-offset:2px}
+  .slot.pick{outline:3px solid var(--ink);outline-offset:2px}
+  .slot.mine{border-style:dashed}
+  .book{margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .book button{margin-top:8px}
+  .book #bookBtn:not(:disabled){background:var(--go);border-color:var(--go);color:#0b2414;font-weight:600}
+  .book button:disabled{opacity:.5;cursor:not-allowed}
+  .bmsg{font-size:15px}
+  .bmsg.warn{color:var(--stop)}
+  .bcode{margin-top:6px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:.18em;text-align:center}
+  .bcode small{display:block;font-family:var(--font);font-size:13px;letter-spacing:0;font-weight:400;color:var(--muted)}
+  .meta{margin-top:12px;display:flex;justify-content:space-between;font-size:14px;color:var(--muted);padding:0 4px}
+  details{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:14px}
+  summary{cursor:pointer;color:var(--muted)}
+  label{display:block;margin:10px 0 4px;color:var(--muted);font-size:13px}
+  input,select,button{font:inherit;color:var(--ink);background:var(--page);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+  button{margin-top:10px;cursor:pointer}
+  button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){.arm,.bay-car,.bay-led{transition:none}.is-suggest .suggest-ring{animation:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <h1>Carpark</h1>
+    <span class="chip wait" id="chip">Connecting</span>
+  </div>
+
+  <section class="hero" aria-live="polite">
+    <div class="n"><span id="free">-</span><small> / 4</small></div>
+    <div class="t" id="freeText">Waiting for the carpark</div>
+  </section>
+
+  <div class="banner" id="banner">Gate: unknown</div>
+
+  <svg class="map" id="map" viewBox="0 0 720 480" role="img" aria-label="Live map of the carpark"></svg>
+
+  <section class="grid" id="grid" aria-label="Bays"></section>
+
+  <section class="book" id="book" aria-live="polite">
+    <div class="bmsg" id="bookMsg">Tap a free bay to book it.</div>
+    <div class="bcode" id="bookCode" hidden></div>
+    <button id="goBtn" hidden>Drive to the carpark</button>
+    <button id="bookBtn" disabled>Book a bay</button>
+    <button id="cancelBtn" hidden>Cancel booking</button>
+  </section>
+
+  <div class="meta"><span>Cars inside: <b id="inside">-</b></span><span id="seen">Not updated yet</span></div>
+
+  <details>
+    <summary>Connection settings</summary>
+    <label for="prefix">Topic prefix (same as PREFIX in main.cpp)</label>
+    <input id="prefix" autocomplete="off" spellcheck="false">
+    <label for="broker">Broker</label>
+    <select id="broker">
+      <option value="hivemq">HiveMQ: broker.hivemq.com</option>
+      <option value="emqx">EMQX: broker.emqx.io</option>
+    </select>
+    <button id="go">Reconnect</button>
+  </details>
+</div>
+
+<script>
+(() => {
+  const NUM = 4;
+  const DEFAULT_PREFIX = 'takrim2026/carpark/k7q2x9m4';
+  const BROKERS = { hivemq: 'wss://broker.hivemq.com:8884/mqtt', emqx: 'wss://broker.emqx.io:8084/mqtt' };
+  const COLORS = ['#e4572e', '#3a86ff', '#f2b632', '#8ac926'];
+  const $ = id => document.getElementById(id);
+  const load = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
+  const save = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+
+  const q = new URLSearchParams(location.search);
+  let prefix = (q.get('prefix') || load('carpark.prefix.v2', DEFAULT_PREFIX)).replace(/^\/+|\/+$/g, '');
+  let brokerKey = load('carpark.broker', 'hivemq');
+  let client = null;
+  const fresh = () => ({ free: null, suggest: 0, gate: null, inside: null, hold: null,
+    slots: Array(NUM).fill(null), reserve: Array(NUM).fill(null) });   // reserve[k]: null = unknown, false = none, {code, rem, arrived, at}
+  let state = fresh();
+  let espOnline = false;
+  let picked = -1;                 // bay the person tapped (0-based)
+  let note = '', noteWarn = false; // last message about a booking
+  let mine = null;                 // my booking: { bay, code, status: 'pending' | 'active' }
+  let goSent = '';                 // code of the booking whose car I already sent off
+  try { const m = JSON.parse(load('carpark.booking.v1', 'null')); if (m && m.status === 'active') mine = m; } catch (e) {}
+  const saveMine = () => save('carpark.booking.v1', mine ? JSON.stringify(mine) : '');
+
+  // ---------- the map (same layout as the simulator) ----------
+  let svg = '<defs><pattern id="stripe" width="24" height="8" patternUnits="userSpaceOnUse">' +
+    '<rect width="12" height="8" fill="#f2b632"/><rect x="12" width="12" height="8" fill="#222"/></pattern></defs>' +
+    '<rect width="720" height="480" fill="#2a2d32"/>' +
+    '<rect y="332" width="720" height="148" fill="#1f2226"/><rect y="331" width="720" height="3" fill="#f2b632"/>' +
+    '<text x="14" y="356" fill="#9ba1a9" font-size="13">Outside (street)</text>' +
+    '<rect y="200" width="720" height="80" fill="#3a3e45"/>' +
+    '<rect x="270" y="280" width="70" height="200" fill="#3a3e45"/><rect x="380" y="280" width="70" height="200" fill="#3a3e45"/>' +
+    '<text x="305" y="305" fill="#e8e4d6" fill-opacity=".5" font-size="15" font-weight="600" text-anchor="middle">&#9650; IN</text>' +
+    '<text x="415" y="305" fill="#e8e4d6" fill-opacity=".5" font-size="15" font-weight="600" text-anchor="middle">OUT &#9660;</text>' +
+    '<line x1="270" y1="350" x2="340" y2="350" stroke="#f2b632" stroke-width="2" stroke-dasharray="6 4"/>' +
+    '<line x1="380" y1="305" x2="450" y2="305" stroke="#f2b632" stroke-width="2" stroke-dasharray="6 4"/>' +
+    '<text x="262" y="354" fill="#f2b632" font-size="12" text-anchor="end">IN sensor</text>' +
+    '<text x="456" y="309" fill="#f2b632" font-size="12">OUT sensor</text>';
+  for (let k = 0; k < NUM; k++) {
+    const x = 36 + k * 166, cx = x + 65;
+    svg += '<g id="bay' + k + '">' +
+      '<rect class="bay-tint" x="' + x + '" y="30" width="130" height="150"/>' +
+      '<path d="M' + x + ' 180 V30 H' + (x + 130) + ' V180" fill="none" stroke="#e8e4d6" stroke-width="3"/>' +
+      '<text x="' + cx + '" y="172" fill="#e8e4d6" fill-opacity=".45" font-size="30" font-weight="700" text-anchor="middle">' + (k + 1) + '</text>' +
+      '<circle class="bay-led" cx="' + cx + '" cy="16" r="8"/>' +
+      '<g class="bay-car" transform="translate(' + cx + ' 92)">' +
+        '<rect x="-22" y="-38" width="44" height="76" rx="14" fill="' + COLORS[k] + '"/>' +
+        '<rect x="-16" y="-22" width="32" height="17" rx="6" fill="#10161e" fill-opacity=".88"/>' +
+        '<rect x="-14" y="16" width="28" height="11" rx="4" fill="#10161e" fill-opacity=".78"/></g>' +
+      '<rect class="suggest-ring" x="' + (x - 2) + '" y="28" width="134" height="154" rx="4"/>' +
+      '<text class="go-label" x="' + cx + '" y="52" fill="#f2b632" font-size="15" font-weight="700" text-anchor="middle">GO HERE</text>' +
+      '<text class="rsv-label" id="rsv' + k + '" x="' + cx + '" y="98" text-anchor="middle"></text></g>';
+  }
+  svg += '<g id="gate"><rect x="252" y="318" width="12" height="28" rx="3" fill="#555a62"/>' +
+    '<g class="arm"><rect x="258" y="324" width="208" height="8" rx="4" fill="url(#stripe)"/></g></g>' +
+    '<text x="216" y="336" fill="#9ba1a9" font-size="12">Gate</text>';
+  $('map').innerHTML = svg;
+
+  const gridEls = [];
+  for (let i = 0; i < NUM; i++) {
+    const d = document.createElement('button');
+    d.type = 'button';
+    d.className = 'slot';
+    d.innerHTML = '<div class="no">Bay ' + (i + 1) + '</div><div class="st">-</div>';
+    d.addEventListener('click', () => pick(i));
+    $('grid').append(d);
+    gridEls.push(d);
+  }
+
+  function chip(text, cls) { const c = $('chip'); c.textContent = text; c.className = 'chip ' + cls; }
+
+  // ---------- booking ----------
+  const rsvOf = k => (state.reserve[k] && typeof state.reserve[k] === 'object') ? state.reserve[k] : null;
+  const left = k => { const r = rsvOf(k); return r ? Math.max(0, r.rem - Math.floor((Date.now() - r.at) / 1000)) : 0; };
+  const mmss = n => Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+  const holdText = n => n === null ? '' : (n % 60 === 0 ? (n / 60) + ' min' : n + ' sec');
+  const canBook = k => state.slots[k] === 'free' && state.reserve[k] === false;
+  const connected = () => !!(client && client.connected);
+
+  function setNote(text, warn) { note = text; noteWarn = !!warn; }
+  function endMine(text, warn) { mine = null; goSent = ''; saveMine(); setNote(text, warn); }
+
+  function pick(k) {
+    if (mine) return;
+    if (!canBook(k)) { setNote('Bay ' + (k + 1) + ' is not free to book.', true); picked = -1; }
+    else { picked = (picked === k) ? -1 : k; setNote('', false); }
+    render();
+  }
+
+  function newCode() {
+    const buf = new Uint32Array(1);                   // digits only: the gate keypad has no letters
+    (crypto.getRandomValues ? crypto.getRandomValues(buf) : (buf[0] = Math.random() * 4294967296));
+    return String(1000 + (buf[0] % 9000));            // 1000-9999
+  }
+
+  function book() {
+    if (mine || picked < 0 || !connected() || !espOnline || !canBook(picked)) return;
+    const code = newCode();
+    mine = { bay: picked + 1, code, status: 'pending' };
+    client.publish(prefix + '/sim/book', mine.bay + ':' + code, { qos: 0 });
+    setNote('Booking bay ' + mine.bay + '...', false);
+    picked = -1;
+    setTimeout(() => {
+      if (mine && mine.code === code && mine.status === 'pending') endMine('No answer from the carpark. Try again.', true), render();
+    }, 5000);
+    render();
+  }
+
+  function go() {                  // "I am driving to the carpark now": the simulator sends the booked car in
+    if (!mine || mine.status !== 'active' || !connected()) return;
+    const code = mine.code;
+    client.publish(prefix + '/sim/arrive', code, { qos: 1 });
+    goSent = code;
+    render();
+    // If the simulator never receives the command, do not leave this button disabled forever.
+    setTimeout(() => {
+      if (!mine || mine.code !== code || goSent !== code) return;
+      const r = rsvOf(mine.bay - 1);
+      if (!r || !r.arrived) { goSent = ''; setNote('The car did not start. You can tap Drive again.', true); render(); }
+    }, 20000);
+  }
+
+  function cancel() {
+    if (!mine || !connected()) return;
+    client.publish(prefix + '/sim/cancel', mine.code, { qos: 0 });
+    setNote('Cancelling...', false);
+    render();
+  }
+
+  function onBookEvent(name, code) {
+    if (!mine || mine.code !== code) return;
+    const bay = mine.bay;
+    if (name === 'book-ok') { mine.status = 'active'; saveMine(); setNote('', false); }
+    else if (name === 'book-denied') endMine('Bay ' + bay + ' is not available any more. Pick another bay.', true);
+    else if (name === 'book-expired') endMine('Time is up. Booking for bay ' + bay + ' was released.', true);
+    else if (name === 'book-done') endMine('You parked in bay ' + bay + '. Booking complete.', false);
+    else if (name === 'book-cancelled') endMine('Booking cancelled.', false);
+    render();
+  }
+
+  // keep my booking in step with what the carpark says
+  function syncMine() {
+    if (!mine) return;
+    const r = state.reserve[mine.bay - 1];
+    if (r === null) return;                                  // not heard yet
+    const same = !!(r && r.code === mine.code);
+    if (mine.status === 'pending' && same) { mine.status = 'active'; saveMine(); }
+    else if (mine.status === 'active' && !same) endMine('Your booking has ended.', false);
+  }
+
+  function renderBook() {
+    syncMine();
+    const msg = $('bookMsg'), codeEl = $('bookCode'), bb = $('bookBtn'), cb = $('cancelBtn'), gb = $('goBtn');
+    if (picked >= 0 && !canBook(picked)) picked = -1;
+    if (mine && mine.status === 'active') {
+      const r = rsvOf(mine.bay - 1), t = left(mine.bay - 1);
+      msg.className = 'bmsg';
+      msg.textContent = r && r.arrived
+        ? 'You are inside. Park in bay ' + mine.bay + ' within ' + mmss(t) + '.'
+        : 'Bay ' + mine.bay + ' is yours for ' + mmss(t) + '. Tap the button when you are ready to drive in.';
+      codeEl.hidden = false;
+      codeEl.innerHTML = '';
+      codeEl.append(mine.code);
+      const sm = document.createElement('small'); sm.textContent = 'Type this code on the gate keypad, then press #';
+      codeEl.append(sm);
+      bb.hidden = true; cb.hidden = false; cb.disabled = !connected();
+      const onWay = goSent === mine.code;
+      gb.hidden = !!(r && r.arrived);                        // once the car is through the gate there is nothing to press
+      gb.disabled = !connected() || onWay;
+      gb.textContent = onWay ? 'Your car is on its way...' : 'Drive to the carpark';
+    } else {
+      codeEl.hidden = true; cb.hidden = true; gb.hidden = true; bb.hidden = false;
+      msg.className = 'bmsg' + (noteWarn ? ' warn' : '');
+      msg.textContent = note || (picked >= 0 ? 'Bay ' + (picked + 1) + ' selected.' : 'Tap a free bay to book it.');
+      bb.disabled = !(picked >= 0 && !mine && connected() && espOnline);
+      bb.textContent = picked >= 0
+        ? 'Book bay ' + (picked + 1) + (state.hold !== null ? ' (held ' + holdText(state.hold) + ')' : '')
+        : 'Book a bay';
+    }
+  }
+
+  function render() {
+    let rsvN = 0;
+    for (let k = 0; k < NUM; k++) if (rsvOf(k)) rsvN++;
+    $('free').textContent = state.free === null ? '-' : state.free;
+    $('freeText').textContent =
+      state.free === null ? 'Waiting for the carpark' :
+      (state.free === 0 ? 'No free bay' : state.free === 1 ? '1 bay free' : state.free + ' bays free') +
+      (rsvN ? ' · ' + rsvN + ' reserved' : '');
+    $('inside').textContent = state.inside === null ? '-' : state.inside;
+
+    const b = $('banner');
+    if (state.free === 0 && !rsvN) { b.className = 'banner stop'; b.textContent = 'FULL - no entry'; }
+    else if (state.free === 0) { b.className = 'banner stop'; b.textContent = 'No free bay - only booked cars can enter'; }
+    else if (state.suggest > 0) { b.className = 'banner guide'; b.textContent = 'A car is arriving: guide it to bay ' + state.suggest; }
+    else if (state.gate === 'open') { b.className = 'banner go'; b.textContent = 'Gate open'; }
+    else if (state.gate === 'closed') { b.className = 'banner'; b.textContent = 'Gate closed'; }
+    else { b.className = 'banner'; b.textContent = 'Gate: unknown'; }
+
+    $('gate').setAttribute('class', state.gate === 'open' ? 'open' : '');
+    for (let i = 0; i < NUM; i++) {
+      const s = state.slots[i], sug = state.suggest === i + 1, r = rsvOf(i);
+      const isMine = !!(r && mine && mine.code === r.code);
+      $('bay' + i).setAttribute('class', (s || '') + (r ? ' reserved' : '') + (sug ? ' is-suggest' : ''));
+      $('rsv' + i).textContent = r ? (isMine ? 'YOUR BAY ' : 'RESERVED ') + mmss(left(i)) : '';
+      gridEls[i].className = 'slot' + (s ? ' ' + s : '') + (r ? ' reserved' : '') + (sug ? ' suggest' : '') +
+        (picked === i ? ' pick' : '') + (isMine ? ' mine' : '');
+      gridEls[i].querySelector('.st').textContent = r ? (isMine ? 'Yours' : 'Reserved') : s === 'free' ? 'Free' : s === 'occupied' ? 'Taken' : '-';
+      gridEls[i].setAttribute('aria-pressed', picked === i ? 'true' : 'false');
+    }
+    renderBook();
+  }
+
+  function onMsg(topic, buf) {
+    const base = prefix + '/status/';
+    if (!topic.startsWith(base)) return;
+    const sub = topic.slice(base.length), msg = buf.toString().trim();
+    if (sub.startsWith('slot/')) {
+      const k = Number(sub.slice(5)) - 1;
+      if (k >= 0 && k < NUM && (msg === 'free' || msg === 'occupied')) state.slots[k] = msg;
+    } else if (sub === 'available') { const n = Number(msg); if (Number.isInteger(n) && n >= 0 && n <= NUM) state.free = n; }
+    else if (sub === 'suggest') { state.suggest = Number(msg) || 0; }
+    else if (sub === 'inside') { const n = Number(msg); if (Number.isInteger(n) && n >= 0) state.inside = n; }
+    else if (sub === 'gate') { state.gate = msg === 'open' ? 'open' : 'closed'; }
+    else if (sub === 'hold') { const n = Number(msg); if (Number.isInteger(n) && n > 0) state.hold = n; }
+    else if (sub.startsWith('reserve/')) {
+      const k = Number(sub.slice(8)) - 1;
+      if (k >= 0 && k < NUM) {
+        if (msg === 'none') state.reserve[k] = false;
+        else {
+          const [code, rem, arr] = msg.split(':');
+          if (code && Number.isInteger(Number(rem))) state.reserve[k] = { code, rem: Number(rem), arrived: arr === '1', at: Date.now() };
+        }
+      }
+    }
+    else if (sub === 'event') { const [name, code] = msg.split(':'); if (name.startsWith('book-')) onBookEvent(name, code); }
+    else if (sub === 'online') {
+      espOnline = msg === 'online';
+      chip(espOnline ? 'ESP32 online' : 'ESP32 offline', espOnline ? 'ok' : 'bad');
+    }
+    $('seen').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    render();
+  }
+
+  function connect() {
+    if (typeof mqtt === 'undefined') { chip('MQTT library failed to load', 'bad'); return; }
+    if (client) { client.removeAllListeners(); client.end(true); }
+    state = fresh();
+    espOnline = false; picked = -1;
+    render();
+    chip('Connecting', 'wait');
+    client = mqtt.connect(BROKERS[brokerKey], { clientId: 'app-' + Math.random().toString(16).slice(2, 8), reconnectPeriod: 3000, connectTimeout: 8000 });
+    client.on('connect', () => { chip('Broker connected', 'wait'); client.subscribe(prefix + '/status/#'); });   // this page only publishes bookings: sim/book and sim/cancel
+    client.on('reconnect', () => chip('Reconnecting', 'wait'));
+    client.on('close', () => chip('Disconnected', 'bad'));
+    client.on('message', onMsg);
+  }
+
+  $('prefix').value = prefix;
+  $('broker').value = brokerKey;
+  $('go').addEventListener('click', () => {
+    prefix = $('prefix').value.trim().replace(/^\/+|\/+$/g, '') || DEFAULT_PREFIX;
+    brokerKey = $('broker').value;
+    $('prefix').value = prefix;
+    save('carpark.prefix.v2', prefix);
+    save('carpark.broker', brokerKey);
+    connect();
+  });
+  $('bookBtn').addEventListener('click', book);
+  $('cancelBtn').addEventListener('click', cancel);
+  $('goBtn').addEventListener('click', go);
+  setInterval(render, 1000);                     // countdown
+  connect();
+})();
+</script>
+</body>
+</html>

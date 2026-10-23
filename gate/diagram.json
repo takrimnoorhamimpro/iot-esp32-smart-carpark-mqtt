@@ -1,0 +1,217 @@
+{
+ "version": 1,
+ "author": "Takrim",
+ "editor": "wokwi",
+ "parts": [
+  {
+   "type": "wokwi-esp32-devkit-v1",
+   "id": "esp",
+   "top": 0,
+   "left": 0,
+   "attrs": {}
+  },
+  {
+   "type": "wokwi-lcd1602",
+   "id": "lcd1",
+   "top": -330,
+   "left": 260,
+   "attrs": {
+    "pins": "i2c"
+   }
+  },
+  {
+   "type": "wokwi-servo",
+   "id": "servo1",
+   "top": -150,
+   "left": 560,
+   "attrs": {}
+  },
+  {
+   "type": "wokwi-buzzer",
+   "id": "bz1",
+   "top": 20,
+   "left": 650,
+   "attrs": {
+    "volume": "0.1"
+   }
+  },
+  {
+   "type": "wokwi-hc-sr04",
+   "id": "usIn",
+   "top": 130,
+   "left": 260,
+   "attrs": {
+    "distance": "400"
+   }
+  },
+  {
+   "type": "wokwi-hc-sr04",
+   "id": "usOut",
+   "top": 130,
+   "left": 460,
+   "attrs": {
+    "distance": "400"
+   }
+  },
+  {
+   "type": "wokwi-membrane-keypad",
+   "id": "kp",
+   "top": -420,
+   "left": 560,
+   "attrs": {}
+  }
+ ],
+ "connections": [
+  [
+   "kp:R1",
+   "esp:D13",
+   "green",
+   []
+  ],
+  [
+   "kp:R2",
+   "esp:D14",
+   "green",
+   []
+  ],
+  [
+   "kp:R3",
+   "esp:D27",
+   "green",
+   []
+  ],
+  [
+   "kp:R4",
+   "esp:D26",
+   "green",
+   []
+  ],
+  [
+   "kp:C1",
+   "esp:D25",
+   "blue",
+   []
+  ],
+  [
+   "kp:C2",
+   "esp:D33",
+   "blue",
+   []
+  ],
+  [
+   "kp:C3",
+   "esp:D32",
+   "blue",
+   []
+  ],
+  [
+   "kp:C4",
+   "esp:D23",
+   "blue",
+   []
+  ],
+  [
+   "usIn:VCC",
+   "esp:VIN",
+   "red",
+   []
+  ],
+  [
+   "usIn:GND",
+   "esp:GND.1",
+   "black",
+   []
+  ],
+  [
+   "usIn:TRIG",
+   "esp:D4",
+   "green",
+   []
+  ],
+  [
+   "usIn:ECHO",
+   "esp:D34",
+   "blue",
+   []
+  ],
+  [
+   "usOut:VCC",
+   "esp:VIN",
+   "red",
+   []
+  ],
+  [
+   "usOut:GND",
+   "esp:GND.1",
+   "black",
+   []
+  ],
+  [
+   "usOut:TRIG",
+   "esp:D5",
+   "green",
+   []
+  ],
+  [
+   "usOut:ECHO",
+   "esp:D35",
+   "blue",
+   []
+  ],
+  [
+   "servo1:PWM",
+   "esp:D18",
+   "orange",
+   []
+  ],
+  [
+   "servo1:V+",
+   "esp:VIN",
+   "red",
+   []
+  ],
+  [
+   "servo1:GND",
+   "esp:GND.1",
+   "black",
+   []
+  ],
+  [
+   "bz1:2",
+   "esp:D19",
+   "green",
+   []
+  ],
+  [
+   "bz1:1",
+   "esp:GND.1",
+   "black",
+   []
+  ],
+  [
+   "lcd1:SDA",
+   "esp:D21",
+   "blue",
+   []
+  ],
+  [
+   "lcd1:SCL",
+   "esp:D22",
+   "yellow",
+   []
+  ],
+  [
+   "lcd1:VCC",
+   "esp:VIN",
+   "red",
+   []
+  ],
+  [
+   "lcd1:GND",
+   "esp:GND.1",
+   "black",
+   []
+  ]
+ ],
+ "dependencies": {}
+}
