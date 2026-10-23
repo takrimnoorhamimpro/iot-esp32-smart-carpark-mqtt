@@ -1,7 +1,7 @@
 # Smart Carpark
 
 An IoT smart carpark built from **two ESP32 boards** and **two web pages**, all talking to each other over **MQTT**.
-Drivers book a bay in a web app and get a 4-digit code. At the gate they type the code on a keypad, the barrier opens, and LEDs guide them to the right bay. Cars without a booking can still walk in, as long as the carpark is not full.
+Drivers book a bay in a web app and get a 4-digit code. At the gate they type the code on a keypad, the barrier opens, and LEDs guide them to the right bay. You can also see this extra codes of Cars without a booking can still walk in, as long as the carpark is not full (I just did this code for testing purpose on npc cars, after I removed the npc cars but you can add on your own).
 
 Everything runs in the [Wokwi](https://wokwi.com) simulator, so **no physical hardware is needed** to try it. The same firmware is written to run on real ESP32 boards too.
 
