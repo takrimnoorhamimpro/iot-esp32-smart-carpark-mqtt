@@ -100,23 +100,12 @@ This video (about 10 minutes) shows the project being opened and run in VS Code,
 
 If the player does not load, [open the setup video directly](how%20to%20setup%20project%20in%20vscode.mp4).
 
-### Quick checklist
-
-You need:
+### Requirements
 
 - [Visual Studio Code](https://code.visualstudio.com/) with the **PlatformIO IDE** and **Wokwi Simulator** extensions
-- A free [Wokwi](https://wokwi.com) account (for the simulator license)
-- An internet connection (public MQTT broker and `mqtt.js` from a CDN)
+- An internet connection (the web pages load `mqtt.js` from a public CDN, and the boards and pages use a free public MQTT broker)
 
-Then, in short:
-
-1. Download or clone this repo.
-2. Build both firmwares once: `cd bays && pio run` and `cd gate && pio run` (the first build is slow).
-3. In VS Code press `F1` and run **Wokwi: Request a New License** (one time).
-4. Open `bays/` in one VS Code window and `gate/` in another. In each, press `F1` and run **Wokwi: Start Simulator**. Wait for `MQTT connecting... ok` in the serial output.
-5. Open `web/index.html` (Simulator) and `web/app.html` (Driver App) in your browser. Both should show a green "Broker connected" chip.
-
-> **Windows only:** if the build fails with "path too long", uncomment the `core_dir = C:\pio` line in `bays/platformio.ini` and `gate/platformio.ini`.
+Watch the video above and follow the same steps to set up the project.
 
 ---
 
