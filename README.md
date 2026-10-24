@@ -94,7 +94,7 @@ flowchart LR
 
 ### Setup video
 
-The full VS Code setup (extensions, build, Wokwi license, starting both simulations) is shown step by step in this video (about 10 minutes):
+This video (about 10 minutes) shows the project being opened and run in VS Code, the circuits running in the Wokwi simulator (ESP32, keypad, LCD, ultrasonic sensors and LEDs), and a full test: book a bay in the web app, enter the code on the Wokwi keypad, watch the gate open, then park and exit.
 
 <video src="how%20to%20setup%20project%20in%20vscode.mp4" controls width="100%"></video>
 
